@@ -4,7 +4,9 @@ import sys
 
 logging.basicConfig(level=logging.INFO)
 
+# NVIDIA DeepStream 6.3 installation path
 sys.path.append("/opt/nvidia/deepstream/deepstream/sources/apps/deepstream_python_apps/apps/")
+
 from common.bus_call import bus_call
 import pyds
 import math
@@ -30,6 +32,7 @@ GST_CAPS_FEATURES_NVMM = "memory:NVMM"
 OSD_PROCESS_MODE = 0
 OSD_DISPLAY_TEXT = 0
 
+logger = logging.getLogger()
 
 # pgie_src_pad_buffer_probe  will extract metadata received on OSD sink pad
 # and update params for drawing rectangle, object information etc.
@@ -38,7 +41,7 @@ def pgie_src_pad_buffer_probe(pad, info, u_data):
     num_rects = 0
     gst_buffer = info.get_buffer()
     if not gst_buffer:
-        logging.error("Unable to get GstBuffer")
+        logger.error("Unable to get GstBuffer")
         return
 
     phone_count = 0
@@ -69,7 +72,6 @@ def pgie_src_pad_buffer_probe(pad, info, u_data):
                 obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
             except StopIteration:
                 break
-            logging.error("class id = %s ", obj_meta.class_id)
             if obj_meta.class_id == PGIE_CLASS_ID_CELLPHONE:
                 obj_meta.text_params.display_text = "Cellphone is detected!"
                 phone_count = phone_count + 1
@@ -79,12 +81,12 @@ def pgie_src_pad_buffer_probe(pad, info, u_data):
             except StopIteration:
                 break
 
-        logging.info(f"Frame Number={frame_number}; Number of Objects={num_rects}; PHONE_count={phone_count}")
+        logger.info(f"Frame Number={frame_number}; Number of Objects={num_rects}; PHONE_count={phone_count}")
 
         if ts_from_rtsp:
             ts = frame_meta.ntp_timestamp / 1000000000  # Retrieve timestamp, put decimal in proper position for Unix format
             formatted_timestamp = datetime.datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-            logging.info("RTSP Timestamp: %s", formatted_timestamp)  # Convert timestamp to UTC
+            logger.info("RTSP Timestamp: %s", formatted_timestamp)  # Convert timestamp to UTC
 
         try:
             l_frame = l_frame.next
@@ -95,7 +97,7 @@ def pgie_src_pad_buffer_probe(pad, info, u_data):
 
 
 def cb_newpad(decodebin, decoder_src_pad, data):
-    logging.info("In cb_newpad")
+    logger.info("In cb_newpad")
     caps = decoder_src_pad.get_current_caps()
     gststruct = caps.get_structure(0)
     gstname = gststruct.get_name()
@@ -104,23 +106,23 @@ def cb_newpad(decodebin, decoder_src_pad, data):
 
     # Need to check if the pad created by the decodebin is for video and not
     # audio.
-    logging.info("gstname= %s", gstname)
+    logger.info("gstname= %s", gstname)
     if gstname.find("video") != -1:
         # Link the decodebin pad only if decodebin has picked nvidia
         # decoder plugin nvdec_*. We do this by checking if the pad caps contain
         # NVMM memory features.
-        logging.info("features= %s", features)
+        logger.info("features= %s", features)
         if features.contains("memory:NVMM"):
             # Get the source bin ghost pad
             bin_ghost_pad = source_bin.get_static_pad("src")
             if not bin_ghost_pad.set_target(decoder_src_pad):
-                logging.error("Failed to link decoder src pad to source bin ghost pad")
+                logger.error("Failed to link decoder src pad to source bin ghost pad")
         else:
-            logging.error("Error: Decodebin did not pick nvidia decoder plugin.")
+            logger.error("Error: Decodebin did not pick nvidia decoder plugin.")
 
 
 def decodebin_child_added(child_proxy, element, name, user_data):
-    logging.info("Decodebin child added: %s", name)
+    logger.info("Decodebin child added: %s", name)
     if name.find("decodebin") != -1:
         element.connect("child-added", decodebin_child_added, user_data)
 
@@ -129,22 +131,22 @@ def decodebin_child_added(child_proxy, element, name, user_data):
 
 
 def create_source_bin(uri):
-    logging.info("Creating source bin")
+    logger.info("Creating source bin")
 
     # Create a source GstBin to abstract this bin's content from the rest of the
     # pipeline
     bin_name = "source-bin-0"
-    logging.info(bin_name)
+    logger.info(bin_name)
     nbin = Gst.Bin.new(bin_name)
     if not nbin:
-        logging.error("Unable to create source bin")
+        logger.error("Unable to create source bin")
 
     # Source element for reading from the uri.
     # We will use decodebin and let it figure out the container format of the
     # stream and the codec and plug the appropriate demux and decode plugins.
     uri_decode_bin = Gst.ElementFactory.make("uridecodebin", "uri-decode-bin")
     if not uri_decode_bin:
-        logging.error(" Unable to create uri decode bin \n")
+        logger.error(" Unable to create uri decode bin \n")
     # We set the input uri to the source element
     uri_decode_bin.set_property("uri", uri)
     # Connect to the "pad-added" signal of the decodebin which generates a
@@ -162,7 +164,7 @@ def create_source_bin(uri):
         Gst.GhostPad.new_no_target(
             "src", Gst.PadDirection.SRC))
     if not bin_pad:
-        logging.error("Failed to add ghost pad in source bin")
+        logger.error("Failed to add ghost pad in source bin")
         return None
     return nbin
 
@@ -176,54 +178,54 @@ def main(args):
 
     # Create gstreamer elements */
     # Create Pipeline element that will form a connection of other elements
-    logging.info("Creating Pipeline")
+    logger.info("Creating Pipeline")
     pipeline = Gst.Pipeline()
 
     if not pipeline:
-        logging.error("Unable to create Pipeline")
-    logging.info("Creating streamux")
+        logger.error("Unable to create Pipeline")
+    logger.info("Creating streamux")
 
     # Create nvstreammux instance to form batches from one or more sources.
     streammux = Gst.ElementFactory.make("nvstreammux", "Stream-muxer")
     if not streammux:
-        logging.error("Unable to create NvStreamMux")
+        logger.error("Unable to create NvStreamMux")
 
     pipeline.add(streammux)
-    logging.info("Creating source_bin_0")
+    logger.info("Creating source_bin_0")
     uri_name = args[0]
     source_bin = create_source_bin(uri_name)
     if not source_bin:
-        logging.error("Unable to create source bin")
+        logger.error("Unable to create source bin")
     pipeline.add(source_bin)
     padname = "sink_0"
     sinkpad = streammux.get_request_pad(padname)
     if not sinkpad:
-        logging.error("Unable to create sink pad bin")
+        logger.error("Unable to create sink pad bin")
     srcpad = source_bin.get_static_pad("src")
     if not srcpad:
-        logging.error("Unable to create src pad bin")
+        logger.error("Unable to create src pad bin")
     srcpad.link(sinkpad)
 
-    logging.info("Creating Pgie")
+    logger.info("Creating Pgie")
     pgie = Gst.ElementFactory.make("nvinfer", "primary-inference")
     if not pgie:
-        logging.error("Unable to create pgie")
-    logging.info("Creating tiler")
+        logger.error("Unable to create pgie")
+    logger.info("Creating tiler")
     tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
     if not tiler:
-        logging.error("Unable to create tiler")
-    logging.info("Creating nvvidconv")
+        logger.error("Unable to create tiler")
+    logger.info("Creating nvvidconv")
     nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
     if not nvvidconv:
-        logging.error("Unable to create nvvidconv")
-    logging.info("Creating nvosd")
+        logger.error("Unable to create nvvidconv")
+    logger.info("Creating nvosd")
     nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
     if not nvosd:
-        logging.error("Unable to create nvosd")
+        logger.error("Unable to create nvosd")
     nvvidconv_postosd = Gst.ElementFactory.make(
         "nvvideoconvert", "convertor_postosd")
     if not nvvidconv_postosd:
-        logging.error("Unable to create nvvidconv_postosd")
+        logger.error("Unable to create nvvidconv_postosd")
 
     # Create a caps filter
     caps = Gst.ElementFactory.make("capsfilter", "filter")
@@ -234,35 +236,36 @@ def main(args):
     # Make the encoder
     if codec == "H264":
         encoder = Gst.ElementFactory.make("nvv4l2h264enc", "encoder")
-        logging.info("Creating H264 Encoder")
+        logger.info("Creating H264 Encoder")
     elif codec == "H265":
         encoder = Gst.ElementFactory.make("nvv4l2h265enc", "encoder")
-        logging.info("Creating H265 Encoder")
+        logger.info("Creating H265 Encoder")
     if not encoder:
-        logging.error(" Unable to create encoder")
+        logger.error(" Unable to create encoder")
     encoder.set_property("bitrate", bitrate)
     encoder.set_property("gpu-id", 0)
 
     # Make the payload-encode video into RTP packets
     if codec == "H264":
         rtppay = Gst.ElementFactory.make("rtph264pay", "rtppay")
-        logging.info("Creating H264 rtppay")
+        logger.info("Creating H264 rtppay")
     elif codec == "H265":
         rtppay = Gst.ElementFactory.make("rtph265pay", "rtppay")
-        logging.info("Creating H265 rtppay")
+        logger.info("Creating H265 rtppay")
     if not rtppay:
-        logging.error(" Unable to create rtppay")
+        logger.error(" Unable to create rtppay")
 
     # Make the UDP sink
     updsink_port_num = 5400
     sink = Gst.ElementFactory.make("udpsink", "udpsink")
     if not sink:
-        logging.error(" Unable to create udpsink")
+        logger.error(" Unable to create udpsink")
 
     sink.set_property("host", "224.224.255.255")
     sink.set_property("port", updsink_port_num)
     sink.set_property("async", False)
     sink.set_property("sync", 1)
+    sink.set_property("qos", 0)
 
     streammux.set_property("width", 1080)
     streammux.set_property("height", 1920)
@@ -277,19 +280,18 @@ def main(args):
     pgie.set_property("config-file-path", "yolov8_pgie_config.txt")
     pgie_batch_size = pgie.get_property("batch-size")
     if pgie_batch_size != number_sources:
-        logging.warning("WARNING: Overriding infer-config batch-size %d with number of sources %d",
+        logger.warning("WARNING: Overriding infer-config batch-size %d with number of sources %d",
             pgie_batch_size, number_sources
         )
         pgie.set_property("batch-size", number_sources)
 
-    logging.info("Adding elements to Pipeline")
+    logger.info("Adding elements to Pipeline")
     tiler_rows = int(math.sqrt(number_sources))
     tiler_columns = int(math.ceil((1.0 * number_sources) / tiler_rows))
     tiler.set_property("rows", tiler_rows)
     tiler.set_property("columns", tiler_columns)
     tiler.set_property("width", TILED_OUTPUT_WIDTH)
     tiler.set_property("height", TILED_OUTPUT_HEIGHT)
-    sink.set_property("qos", 0)
 
     pipeline.add(pgie)
     pipeline.add(tiler)
@@ -319,7 +321,7 @@ def main(args):
 
     pgie_src_pad = pgie.get_static_pad("src")
     if not pgie_src_pad:
-        logging.error("Unable to get src pad")
+        logger.error("Unable to get src pad")
     else:
         pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, pgie_src_pad_buffer_probe, 0)
 
@@ -338,10 +340,10 @@ def main(args):
     factory.set_shared(True)
     server.get_mount_points().add_factory("/ds-test", factory)
 
-    logging.info("*** DeepStream: Launched RTSP Streaming at rtsp://localhost:%d/ds-test ***", rtsp_port_num)
+    logger.info(f"*** DeepStream: Launched RTSP Streaming at rtsp://localhost:{rtsp_port_num}/ds-test ***")
 
     # start play back and listen to events
-    logging.info("Starting pipeline")
+    logger.info("Starting pipeline")
     pipeline.set_state(Gst.State.PLAYING)
     try:
         loop.run()
